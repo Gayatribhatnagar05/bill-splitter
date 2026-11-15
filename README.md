@@ -155,3 +155,13 @@ You must understand every line you submit. We check this with your video and in 
 5. Paste the repository link and the video link in the application form.
 
 We will run `pnpm install && pnpm check && pnpm typecheck && pnpm test` on your repository.
+
+## Decisions
+
+1. **Paying is one conditional UPDATE.** The pay route runs `UPDATE shares SET paid_at = ?, idempotency_key = ? WHERE id = ? AND paid_at IS NULL`. SQLite lets only one of two simultaneous requests change that row, so a share is never paid twice. After the update I read the row back: if the stored key matches the request's key, I return 200 with the same result (a safe retry), otherwise 409. I chose this over "read, then check, then write" because that version has a race between the check and the write.
+
+2. **Money is whole cents, and the split is done in code.** Each member gets `floor(total / members)`, and the first `total % members` members (in the order they were added) get one extra cent, so 1000 cents between 3 gives 334, 333, 333 and the shares always add up to the total. Member order comes from an auto-increment `seq` column, not from the id or the name. The bill and all its shares are inserted in one D1 batch, so a bill never exists without its shares.
+
+3. **The database protects itself, not just the API.** The schema has named constraints: foreign keys (`members_home_fk`, `bills_home_fk`, `shares_bill_fk`, `shares_member_fk`), `bills_total_positive` (total must be above 0), `shares_amount_not_negative`, `shares_one_per_member` (one share per member per bill), and `shares_paid_has_key` (a share is paid only if it has a key). Even if a route has a bug, bad data cannot be saved. The API still validates input first and returns 422 with a clear message.
+
+Trade-off: I added one extra endpoint, `GET /api/homes/:homeId/bills`, because the page needs to list bills and the spec has no route for that. I kept it read-only and separate from the tested routes.
