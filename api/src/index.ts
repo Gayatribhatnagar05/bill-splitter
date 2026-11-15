@@ -169,5 +169,58 @@ app.get('/api/homes/:homeId/balances', async (c) => {
 
   return c.json({ balances: results })
 })
+type BillRow = { id: string; title: string; total_cents: number }
+
+type BillShareRow = {
+  id: string
+  bill_id: string
+  member_id: string
+  member_name: string
+  amount_cents: number
+  paid_at: string | null
+}
+
+const LIST_BILLS_SQL =
+  'SELECT id, title, total_cents FROM bills ' + 'WHERE home_id = ? ORDER BY seq DESC'
+
+const LIST_SHARES_SQL =
+  'SELECT s.id, s.bill_id, s.member_id, m.name AS member_name, ' +
+  's.amount_cents, s.paid_at ' +
+  'FROM shares s ' +
+  'JOIN members m ON m.id = s.member_id ' +
+  'JOIN bills b ON b.id = s.bill_id ' +
+  'WHERE b.home_id = ? ORDER BY s.seq'
+
+app.get('/api/homes/:homeId/bills', async (c) => {
+  const homeId = c.req.param('homeId')
+  const home = await c.env.DB.prepare('SELECT id, name FROM homes WHERE id = ?')
+    .bind(homeId)
+    .first<{ id: string; name: string }>()
+  if (!home) return c.json({ error: 'home not found' }, 404)
+
+  const { results: bills } = await c.env.DB.prepare(LIST_BILLS_SQL).bind(homeId).all<BillRow>()
+  const { results: shares } = await c.env.DB.prepare(LIST_SHARES_SQL)
+    .bind(homeId)
+    .all<BillShareRow>()
+
+  return c.json({
+    home,
+    bills: bills.map((bill) => ({
+      id: bill.id,
+      homeId,
+      title: bill.title,
+      totalCents: bill.total_cents,
+      shares: shares
+        .filter((share) => share.bill_id === bill.id)
+        .map((share) => ({
+          id: share.id,
+          memberId: share.member_id,
+          memberName: share.member_name,
+          amountCents: share.amount_cents,
+          paidAt: share.paid_at,
+        })),
+    })),
+  })
+})
 
 export default app
